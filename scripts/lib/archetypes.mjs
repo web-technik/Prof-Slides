@@ -80,7 +80,9 @@ export function cover(pptx, slide, sd, T) {
 export function section(pptx, slide, sd, T) {
   background(slide, T, true);
   if (T.decor.sectionBand) {
-    slide.addShape(pptx.ShapeType.rect, { x: 0, y: SLIDE_H / 2 - 0.02, w: SLIDE_W, h: 0.04, fill: { color: hex(T.palette.accent) }, line: { type: "none" } });
+    // Sits BELOW the centred title block (which spans y 3.1–4.7in): a band on the
+    // vertical centre line cuts straight through the descenders of a 1-line title.
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 5.5, w: SLIDE_W, h: 0.04, fill: { color: hex(T.palette.accent) }, line: { type: "none" } });
   }
   if (sd.kicker) {
     slide.addText(sd.kicker.toUpperCase(), {
