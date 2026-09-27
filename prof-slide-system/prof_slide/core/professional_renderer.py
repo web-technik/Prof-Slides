@@ -1,0 +1,392 @@
+"""Theme-aware renderer for editable FreeStyle presentation pages."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))
+
+
+def _darken(hex_color: str, amount: int = 20) -> str:
+    r, g, b = _hex_to_rgb(hex_color)
+    return f"#{max(0, r - amount):02X}{max(0, g - amount):02X}{max(0, b - amount):02X}"
+
+
+@dataclass(frozen=True)
+class _ThemeTokens:
+    """Renderer-facing view of a resolved theme mapping."""
+
+    background: str
+    surface: str
+    ink: str
+    muted: str
+    border: str
+    accent: str
+    accent_secondary: str
+    success: str
+    warning: str
+    danger: str
+    data_1: str
+    data_2: str
+    on_primary: str
+    heading_font: str | None
+    body_font: str | None
+    mono_font: str | None
+    cjk_fallback: str | None
+    decoration: Mapping[str, Any]
+    layout: Mapping[str, Any]
+
+    @classmethod
+    def from_theme(cls, theme: Mapping[str, Any]) -> _ThemeTokens:
+        colors = theme.get("colors", {})
+        roles = theme.get("semantic_roles", {})
+        typography = theme.get("typography", {})
+
+        def role(name: str, fallback: str) -> str:
+            return roles.get(name) or fallback
+
+        primary = colors.get("primary", "#1D78FA")
+        accent = role("accent", colors.get("accent", primary))
+        return cls(
+            background=role("background", colors.get("background", "#FFFFFF")),
+            surface=role("surface", colors.get("card", colors.get("muted", "#F5F5F5"))),
+            ink=role("ink", colors.get("foreground", colors.get("text_dark", "#111827"))),
+            muted=role("muted", colors.get("muted-foreground", colors.get("text_muted", "#6B7280"))),
+            border=role("border", colors.get("border", "#E5E7EB")),
+            accent=accent,
+            accent_secondary=role("accent-secondary", colors.get("secondary", primary)),
+            success=role("success", accent),
+            warning=role("warning", colors.get("secondary", accent)),
+            danger=role("danger", colors.get("destructive", accent)),
+            data_1=role("data-series-1", primary),
+            data_2=role("data-series-2", accent),
+            on_primary=colors.get("on-primary", "#FFFFFF"),
+            heading_font=typography.get("heading"),
+            body_font=typography.get("body"),
+            mono_font=typography.get("mono") or typography.get("body"),
+            cjk_fallback=typography.get("cjk_fallback") or colors.get("font_cjk"),
+            decoration=theme.get("decoration", {}),
+            layout=theme.get("layout_variant", {}),
+        )
+
+    @property
+    def color_context(self) -> dict[str, str]:
+        """Compatibility context used by text helpers for CJK fallback."""
+        return {"font_body": self.body_font or "", "font_cjk": self.cjk_fallback or ""}
+
+    @property
+    def content_left(self) -> float:
+        return float(self.layout.get("content_margin_left", 1.0))
+
+    @property
+    def content_right(self) -> float:
+        return float(self.layout.get("content_margin_right", 1.0))
+
+    @property
+    def content_width(self) -> float:
+        return 13.333 - self.content_left - self.content_right
+
+    @property
+    def title_alignment(self) -> str:
+        return self.layout.get("title_alignment", "left")
+
+
+def _text(slide: Any, *args: Any, kind: str = "body", tokens: _ThemeTokens, **kwargs: Any) -> Any:
+    from prof_slide.tools.text import text
+
+    font_name = tokens.heading_font if kind == "heading" else tokens.mono_font if kind == "mono" else tokens.body_font
+    return text(slide, *args, font_name=font_name, C=tokens.color_context, **kwargs)
+
+
+def render_professional_page(
+    slide: Any,
+    goal: str,
+    title: str,
+    subtitle: str,
+    bullets: list[str],
+    theme: Mapping[str, Any],
+    page_index: int,
+    total_pages: int,
+) -> None:
+    """Render an editable FreeStyle page from a complete resolved theme."""
+    from prof_slide.tools.shapes import rect
+
+    tokens = _ThemeTokens.from_theme(theme)
+    rect(slide, 0, 0, 13.333, 7.5, tokens.background)
+    _render_page_decoration(slide, tokens)
+
+    if goal == "hook":
+        _render_hero(slide, title, subtitle, tokens)
+    elif goal == "problem":
+        _render_problem(slide, title, subtitle, bullets, tokens)
+    elif goal == "solution":
+        _render_solution(slide, title, subtitle, bullets, tokens)
+    elif goal == "features":
+        _render_features(slide, title, subtitle, bullets, tokens)
+    elif goal == "data":
+        _render_data(slide, title, subtitle, bullets, tokens)
+    elif goal == "code":
+        _render_code(slide, title, subtitle, bullets, tokens)
+    elif goal == "cta":
+        _render_cta(slide, title, subtitle, tokens)
+    else:
+        _render_content(slide, title, subtitle, bullets, tokens)
+
+    if page_index > 0:
+        _text(
+            slide,
+            12.0,
+            7.0,
+            1.0,
+            0.3,
+            f"{page_index + 1}/{total_pages}",
+            font_size=10,
+            color=tokens.muted,
+            align="right",
+            tokens=tokens,
+        )
+
+
+def _section_header(
+    slide: Any, label: str, title: str, subtitle: str, color: str, tokens: _ThemeTokens
+) -> float:
+    from prof_slide.tools.shapes import rect
+
+    title_height = 1.15 if tokens.title_alignment == "center" or len(title) > 44 else 0.8
+    _text(
+        slide,
+        tokens.content_left,
+        0.5,
+        tokens.content_width,
+        0.3,
+        label,
+        font_size=12,
+        bold=True,
+        color=color,
+        kind="heading",
+        align=tokens.title_alignment,
+        tokens=tokens,
+    )
+    _text(
+        slide,
+        tokens.content_left,
+        0.9,
+        tokens.content_width,
+        title_height,
+        title,
+        font_size=36,
+        bold=True,
+        color=tokens.ink,
+        kind="heading",
+        align=tokens.title_alignment,
+        tokens=tokens,
+    )
+    underline_y = 0.9 + title_height + 0.1
+    if tokens.decoration.get("title_underline", True):
+        line_width = 2.0 if tokens.title_alignment == "left" else min(3.0, tokens.content_width * 0.3)
+        line_left = tokens.content_left if tokens.title_alignment == "left" else (13.333 - line_width) / 2
+        rect(slide, line_left, underline_y, line_width, 0.04, color)
+    if subtitle:
+        _text(
+            slide, tokens.content_left, underline_y + 0.14, tokens.content_width, 0.3,
+            subtitle, font_size=12, color=tokens.muted, align=tokens.title_alignment, tokens=tokens,
+        )
+        return max(2.3, underline_y + 0.55)
+    return max(2.3, underline_y + 0.25)
+
+
+def _render_page_decoration(slide: Any, tokens: _ThemeTokens) -> None:
+    """Apply only low-risk decoration rules; page composition remains free."""
+    from prof_slide.tools.shapes import rect
+
+    if tokens.decoration.get("top_line"):
+        rect(slide, 0, 0, 13.333, 0.035, tokens.accent)
+    if tokens.decoration.get("bottom_line"):
+        rect(slide, 0, 7.465, 13.333, 0.035, tokens.accent)
+    if tokens.decoration.get("left_accent"):
+        rect(slide, 0.45, 0.5, 0.045, 0.65, tokens.accent)
+
+
+def _render_hero(slide: Any, title: str, subtitle: str, tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import oval, rect
+
+    for name, args in (
+        ("Background Decoration 1", (9.5, -1.0, 5.0, 5.0, _darken(tokens.data_1, 30))),
+        ("Background Decoration 2", (10.5, 0.5, 3.5, 3.5, tokens.data_1)),
+        ("Background Decoration 3", (-1.5, 5.0, 4.0, 4.0, _darken(tokens.accent, 40))),
+    ):
+        ornament = oval(slide, *args)
+        ornament.name = name
+    rect(slide, 1.0, 2.8, 1.5, 0.06, tokens.accent)
+    _text(
+        slide,
+        tokens.content_left,
+        2.8,
+        min(8.0, tokens.content_width),
+        1.5,
+        title,
+        font_size=48,
+        bold=True,
+        color=tokens.ink,
+        kind="heading",
+        align=tokens.title_alignment,
+        tokens=tokens,
+    )
+    if subtitle:
+        _text(
+            slide,
+            tokens.content_left,
+            4.45,
+            min(8.0, tokens.content_width),
+            0.6,
+            subtitle,
+            font_size=20,
+            color=tokens.muted,
+            align=tokens.title_alignment,
+            tokens=tokens,
+        )
+
+
+def _render_problem(slide: Any, title: str, subtitle: str, bullets: list[str], tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import oval, rrect
+
+    content_top = _section_header(slide, "PROBLEM", title, subtitle, tokens.danger, tokens)
+    if not bullets:
+        return
+    card_width = min(3.5, 10.5 / len(bullets[:3]))
+    for index, bullet in enumerate(bullets[:3]):
+        x = 1.0 + index * (card_width + 0.4)
+        rrect(slide, x, content_top, card_width, 3.5, tokens.surface, line=tokens.border)
+        oval(slide, x + card_width / 2 - 0.4, content_top + 0.3, 0.8, 0.8, tokens.danger)
+        _text(
+            slide, x + card_width / 2 - 0.3, content_top + 0.4, 0.6, 0.6, str(index + 1), font_size=24, bold=True,
+            color=tokens.on_primary, align="center", kind="heading", tokens=tokens,
+        )
+        _text(slide, x + 0.2, content_top + 1.3, card_width - 0.4, 1.8, bullet, font_size=14, color=tokens.ink, align="center", tokens=tokens)
+
+
+def _render_solution(slide: Any, title: str, subtitle: str, bullets: list[str], tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import oval, rect
+
+    content_top = _section_header(slide, "SOLUTION", title, subtitle, tokens.success, tokens)
+    y = content_top
+    for bullet in bullets[:4]:
+        oval(slide, 1.0, y, 0.5, 0.5, tokens.success)
+        _text(slide, 1.05, y + 0.05, 0.4, 0.4, "✓", font_size=18, bold=True, color=tokens.on_primary, align="center", tokens=tokens)
+        _text(slide, 1.8, y + 0.05, 10.0, 0.4, bullet, font_size=16, color=tokens.ink, tokens=tokens)
+        rect(slide, 1.8, y + 0.55, 10.0, 0.01, tokens.border)
+        y += 0.7
+
+
+def _render_features(slide: Any, title: str, subtitle: str, bullets: list[str], tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import oval, rect, rrect
+
+    content_top = _section_header(slide, "FEATURES", title, subtitle, tokens.data_1, tokens)
+    cards = bullets[:3]
+    if not cards:
+        return
+    card_width = min(3.5, 10.5 / len(cards))
+    colors = [tokens.data_1, tokens.data_2, tokens.accent_secondary]
+    for index, (bullet, color) in enumerate(zip(cards, colors[:len(cards)], strict=True)):
+        x = 1.0 + index * (card_width + 0.4)
+        rrect(slide, x, content_top, card_width, 3.8, tokens.surface, line=tokens.border)
+        rect(slide, x, content_top, card_width, 0.08, color)
+        oval(slide, x + card_width / 2 - 0.5, content_top + 0.5, 1.0, 1.0, color)
+        _text(slide, x + card_width / 2 - 0.4, content_top + 0.6, 0.8, 0.8, "★", font_size=32, color=tokens.on_primary, align="center", tokens=tokens)
+        _text(slide, x + 0.3, content_top + 1.8, card_width - 0.6, 1.5, bullet, font_size=14, color=tokens.ink, align="center", tokens=tokens)
+
+
+def _render_data(slide: Any, title: str, subtitle: str, bullets: list[str], tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import rect, rrect
+
+    content_top = _section_header(slide, "METRICS", title, subtitle, tokens.warning, tokens)
+    kpi_data = []
+    for bullet in bullets:
+        if ": " in bullet:
+            label, value = bullet.split(": ", 1)
+            kpi_data.append((value, label))
+        else:
+            kpi_data.append((bullet, ""))
+    if not kpi_data or len(kpi_data) > 4:
+        return
+    card_width = min(2.8, 10.0 / len(kpi_data))
+    gap = 0.4
+    total_width = len(kpi_data) * card_width + (len(kpi_data) - 1) * gap
+    start_x = (13.333 - total_width) / 2
+    colors = [tokens.data_1, tokens.data_2, tokens.accent_secondary, tokens.warning]
+    for index, (value, label) in enumerate(kpi_data):
+        x = start_x + index * (card_width + gap)
+        color = colors[index % len(colors)]
+        rrect(slide, x, content_top, card_width, 3.0, tokens.surface, line=tokens.border)
+        rect(slide, x, content_top, card_width, 0.06, color)
+        value_size = 36 if len(value) <= 10 else 24 if len(value) <= 15 else 20
+        value_color = color if _contrast_ratio(color, tokens.surface) >= 3.0 else tokens.ink
+        _text(slide, x, content_top + 0.45, card_width, 1.0, value, font_size=value_size, bold=True, color=value_color, align="center", kind="heading", tokens=tokens)
+        _text(slide, x, content_top + 1.55, card_width, 0.4, label, font_size=12, color=tokens.muted, align="center", tokens=tokens)
+
+
+def _render_code(slide: Any, title: str, subtitle: str, bullets: list[str], tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import rrect
+
+    content_top = _section_header(slide, "CODE", title, subtitle, tokens.accent, tokens)
+    rrect(slide, 1.0, content_top - 0.25, 11.0, 4.5, tokens.surface, line=tokens.border)
+    rrect(slide, 1.2, content_top - 0.05, 1.0, 0.3, tokens.data_1)
+    _text(slide, 1.25, content_top - 0.03, 0.9, 0.25, "Python", font_size=10, bold=True, color=tokens.on_primary, align="center", tokens=tokens)
+    y = content_top + 0.45
+    for line in bullets[:8]:
+        _text(slide, 1.5, y, 10.0, 0.25, line, font_size=12, color=tokens.ink, kind="mono", tokens=tokens)
+        y += 0.35
+
+
+def _render_content(slide: Any, title: str, subtitle: str, bullets: list[str], tokens: _ThemeTokens) -> None:
+    from prof_slide.tools.shapes import oval, rect, rrect
+
+    _text(slide, 1.0, 0.5, 11.0, 0.8, title, font_size=36, bold=True, color=tokens.ink, kind="heading", tokens=tokens)
+    rect(slide, 1.0, 1.4, 2.0, 0.04, tokens.data_1)
+    y = 1.8
+    if subtitle:
+        _text(slide, 1.0, 1.55, 11.0, 0.3, subtitle, font_size=12, color=tokens.muted, tokens=tokens)
+        y = 2.05
+    for bullet in bullets[:5]:
+        rrect(slide, 1.0, y, 11.0, 0.8, tokens.surface, line=tokens.border)
+        oval(slide, 1.3, y + 0.25, 0.3, 0.3, tokens.data_1)
+        _text(slide, 1.8, y + 0.15, 10.0, 0.5, bullet, font_size=15, color=tokens.ink, tokens=tokens)
+        y += 1.0
+
+
+def _render_cta(slide: Any, title: str, subtitle: str, tokens: _ThemeTokens) -> None:
+    """Render a closing page with a visible next action."""
+    from prof_slide.tools.shapes import rrect
+
+    _text(
+        slide, 1.0, 2.0, 11.333, 1.0, title, font_size=44, bold=True,
+        color=tokens.ink, kind="heading", align=tokens.title_alignment, tokens=tokens,
+    )
+    if subtitle:
+        _text(
+            slide, 1.0, 3.25, 11.333, 0.6, subtitle, font_size=20,
+            color=tokens.muted, align=tokens.title_alignment, tokens=tokens,
+        )
+    button_width = 3.0
+    button_left = (13.333 - button_width) / 2
+    rrect(slide, button_left, 4.45, button_width, 0.7, tokens.accent, line=tokens.accent)
+    _text(
+        slide, button_left, 4.62, button_width, 0.3, "Launch a pilot program  →", font_size=16,
+        bold=True, color=tokens.on_primary, align="center", tokens=tokens,
+    )
+
+
+def _contrast_ratio(first: str, second: str) -> float:
+    """Return WCAG relative contrast for two six-digit hex colors."""
+    def luminance(color: str) -> float:
+        channels = [int(color[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+        linear = [channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4 for channel in channels]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    light, dark = sorted((luminance(first), luminance(second)), reverse=True)
+    return (light + 0.05) / (dark + 0.05)

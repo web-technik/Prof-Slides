@@ -1,0 +1,18 @@
+{
+  "platform": "opencode",
+  "displayName": "OpenCode",
+  "folderStructure": {
+    "root": ".opencode",
+    "skillPath": "skills/prof-slade-system",
+    "filename": "SKILL.md"
+  },
+  "globalPath": ".config/opencode/skills",
+  "projectDir": ".opencode",
+  "frontmatter": {
+    "name": "prof-slade-system",
+    "description": "AI-powered PPT generation, fully editable .pptx"
+  },
+  "sections": {
+    "quickReference": false
+  }
+}
